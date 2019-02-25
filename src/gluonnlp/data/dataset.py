@@ -20,14 +20,14 @@
 # pylint: disable=undefined-all-variable
 """NLP Toolkit Dataset API. It allows easy and customizable loading of corpora and dataset files.
 Files can be loaded into formats that are immediately ready for training and evaluation."""
-__all__ = ['TextLineDataset', 'CorpusDataset', 'ConcatDataset', 'TSVDataset']
+__all__ = ['TextLineDataset', 'CorpusDataset', 'ConcatDataset', 'TSVDataset', 'NumpyDataset']
 
 import io
 import os
 import bisect
 import numpy as np
 
-from mxnet.gluon.data import SimpleDataset, Dataset
+from mxnet.gluon.data import SimpleDataset, Dataset, ArrayDataset
 
 from .utils import concat_sequence, line_splitter, whitespace_splitter, Splitter
 
@@ -175,7 +175,7 @@ class CorpusDataset(SimpleDataset):
         A function that splits each sample string into list of tokens. If None, raw samples are
         returned according to `sample_splitter`.
     bos : str or None, default None
-        The token to add at the begining of each sequence. If None, or if tokenizer is not
+        The token to add at the beginning of each sequence. If None, or if tokenizer is not
         specified, then nothing is added.
     eos : str or None, default None
         The token to add at the end of each sequence. If None, or if tokenizer is not
@@ -217,3 +217,41 @@ class CorpusDataset(SimpleDataset):
 
             all_samples += samples
         return all_samples
+
+class NumpyDataset(ArrayDataset):
+    """A dataset wrapping over a Numpy binary (.npy, .npz) file.
+
+    If the file is a .npy file, then a single numpy array is loaded.
+    If the file is a .npz file with multiple arrays, then a list of
+    numpy arrays are loaded, ordered by their key in the archive.
+
+    Sparse matrix is not yet supported.
+
+    Parameters
+    ----------
+    filename : str
+        Path to the .npy or .npz file.
+
+    Properties
+    ----------
+    keys: list of str or None
+        The list of keys loaded from the .npz file.
+    """
+    def __init__(self, filename):
+        arrs = np.load(filename)
+        keys = None
+        data = []
+        if filename.endswith('.npy'):
+            data.append(arrs)
+        elif filename.endswith('.npz'):
+            keys = sorted(arrs.keys())
+            for key in keys:
+                data.append(arrs[key])
+        else:
+            raise ValueError('Unsupported extension: %s'%filename)
+        self._keys = keys
+        super(NumpyDataset, self).__init__(*data)
+
+    @property
+    def keys(self):
+        return self._keys

@@ -56,11 +56,11 @@ command installs the latest version of MXNet.
 .. note::
 
    There are other pre-build MXNet packages that enable GPU supports and
-   accelerate CPU performance, please refer to `this tutorial
-   <http://gluon-crash-course.mxnet.io/mxnet_packages.html>`_ for details. Some
+   accelerate CPU performance, please refer to `this page
+   <http://beta.mxnet.io/install.html>`_ for details. Some
    training scripts are recommended to run on GPUs, if you don't have a GPU
-   machine at hands, you may consider `running on AWS
-   <http://gluon-crash-course.mxnet.io/use_aws.html>`_.
+   machine at hand, you may consider `running on AWS
+   <http://d2l.ai/chapter_appendix/aws.html>`_.
 
 
 After installing MXNet, you can install the GluonNLP toolkit by
@@ -68,6 +68,13 @@ After installing MXNet, you can install the GluonNLP toolkit by
 .. code-block:: console
 
    pip install gluonnlp
+
+
+.. hint::
+
+   For more detailed guide on installing pre-release from latest master branch,
+   install from local copy of GluonNLP source code, etc.,
+   click the :doc:`install <install>` link in the top navigation bar.
 
 
 About GluonNLP
@@ -80,7 +87,7 @@ About GluonNLP
 GluonNLP provides implementations of the state-of-the-art (SOTA) deep learning
 models in NLP, and build blocks for text data pipelines and models.
 It is designed for engineers, researchers, and students to fast prototype
-research ideas and products based on these models. This toolkit offers four main features:
+research ideas and products based on these models. This toolkit offers five main features:
 
 1. Training scripts to reproduce SOTA results reported in research papers.
 2. Pre-trained models for common NLP tasks.
@@ -89,9 +96,11 @@ research ideas and products based on these models. This toolkit offers four main
 5. Community support.
 
 This toolkit assumes that users have basic knowledge about deep learning and
-NLP. Otherwise, please refer to an introduction course such as
-`Deep Learning---The Straight Dope <http://gluon.mxnet.io/>`_ or
+NLP. Otherwise, please refer to an introductory course such as
+`Dive into Deep Learning <https://www.d2l.ai/>`_ or
 `Stanford CS224n <http://web.stanford.edu/class/cs224n/>`_.
+If you are not familiar with Gluon, check out the
+`60-min Gluon crash course <http://beta.mxnet.io/guide/crash-course/index.html>`_.
 
 
 .. toctree::

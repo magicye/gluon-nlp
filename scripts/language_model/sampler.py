@@ -36,8 +36,13 @@ class LogUniformSampler(gluon.block.Block):
     For example, if the classes represent words in a lexicon sorted in decreasing order of
     frequency. If your classes are not ordered by decreasing frequency, do not use this op.
 
-    Additionaly, it also returns the number of times each of the
+    Additionally, it also returns the number of times each of the
     true classes and the sampled classes is expected to occur.
+
+    As the candidates are drawn without replacement, the expected count for the sampled candidates
+    and true classes are approximated. If the candidates are drawn with `num_tries` draws, we assume
+    (falsely) that the number of tries to get a batch of batch_size distinct values is always
+    `num_tries`, and the probability that the value is in a batch is 1 - (1-p)**num_tries.
 
     Parameters
     ----------

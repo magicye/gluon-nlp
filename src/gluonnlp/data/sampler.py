@@ -20,10 +20,11 @@
 (e.g. in the order sorted by length). They can also be used to perform bucketing
 for speeding up the processing of variable-length sequences."""
 __all__ = ['ConstWidthBucket', 'LinearWidthBucket', 'ExpWidthBucket',
-           'SortedSampler', 'FixedBucketSampler', 'SortedBucketSampler']
+           'SortedSampler', 'FixedBucketSampler', 'SortedBucketSampler', 'SplitSampler']
 
 import math
 import warnings
+import random
 import numpy as np
 from mxnet.gluon.data import Sampler
 from .._constants import INT_TYPES
@@ -290,7 +291,8 @@ class FixedBucketSampler(Sampler):
         It is used to generate bucket keys. It supports:
         ConstWidthBucket: all the buckets have the same width
         LinearWidthBucket: the width of ith  bucket follows :math:`w_i = \alpha * i + 1`
-        ExpWidthBucket: the width of ith bucket follows :math:`w_i = bucket_len_step * w_{i-1}`
+        ExpWidthBucket: the width of ith bucket follows
+        :math:`w_i` = bucket_len_step :math:`* w_{i-1}`
     Examples
     --------
     >>> lengths = [np.random.randint(1, 100) for _ in range(1000)]
@@ -438,7 +440,7 @@ class FixedBucketSampler(Sampler):
 
 
 class SortedBucketSampler(Sampler):
-    r"""Batches are samled from sorted buckets of data.
+    r"""Batches are sampled from sorted buckets of data.
 
     First, partition data in buckets of size `batch_size * mult`.
     Each bucket contains `batch_size * mult` elements. The samples inside each bucket are sorted
@@ -497,3 +499,37 @@ class SortedBucketSampler(Sampler):
 
     def __len__(self):
         return (len(self._sort_keys) + self._batch_size - 1) // self._batch_size
+
+class SplitSampler(Sampler):
+    """Split the dataset into `num_parts` parts and randomly sample from the part
+    with index `part_index`.
+
+    The data is randomly shuffled at each iteration within each partition.
+
+    Parameters
+    ----------
+    length: int
+      Number of examples in the dataset
+    num_parts: int
+      Number of partitions which the data is split into
+    part_index: int
+      The index of the part to read from
+    """
+    def __init__(self, length, num_parts=1, part_index=0):
+        # Compute the length of each partition
+        part_len = length // num_parts
+        # Compute the start index for this partition
+        self._start = part_len * part_index
+        # Compute the end index for this partition
+        self._end = self._start + part_len
+        if part_index == num_parts - 1:
+            self._end = length
+
+    def __iter__(self):
+        # Extract examples between `start` and `end`, shuffle and return them.
+        indices = list(range(self._start, self._end))
+        random.shuffle(indices)
+        return iter(indices)
+
+    def __len__(self):
+        return self._end - self._start

@@ -19,10 +19,11 @@
 """BERT models."""
 
 __all__ = ['BERTModel', 'BERTEncoder', 'BERTEncoderCell', 'BERTPositionwiseFFN',
-           'BERTLayerNorm', 'bert_12_768_12', 'bert_24_1024_16']
+           'BERTLayerNorm', 'bert_12_768_12', 'bert_24_1024_16', 'get_bert_model']
 
 import os
-from mxnet.gluon import Block, HybridBlock
+import warnings
+from mxnet.gluon import Block
 from mxnet.gluon import nn
 from mxnet.gluon.model_zoo import model_store
 import mxnet as mx
@@ -30,39 +31,25 @@ from .transformer import BasePositionwiseFFN, BaseTransformerEncoderCell, BaseTr
 from .block import GELU
 from .utils import _load_vocab, _load_pretrained_params
 
+
 ###############################################################################
 #                              COMPONENTS                                     #
 ###############################################################################
 
-class BERTLayerNorm(HybridBlock):
-    """BERT style Layer Normalization.
 
-    Epsilon is added inside the square root.
+class BERTLayerNorm(nn.LayerNorm):
+    """BERT style Layer Normalization, where epsilon is added inside the square
+    root and set to 1e-12 by default.
 
     Inputs:
         - **data**: input tensor with arbitrary shape.
-    Outputs:
         - **out**: output tensor with the same shape as `data`.
     """
+
     def __init__(self, epsilon=1e-12, in_channels=0, prefix=None, params=None):
-        super(BERTLayerNorm, self).__init__(prefix=prefix, params=params)
-        self.gamma = self.params.get('gamma', shape=(in_channels,),
-                                     allow_deferred_init=True)
-        self.beta = self.params.get('beta', shape=(in_channels,),
-                                    allow_deferred_init=True)
-        self._eps = epsilon
+        super(BERTLayerNorm, self).__init__(epsilon=epsilon, in_channels=in_channels,
+                                            prefix=prefix, params=params)
 
-    def hybrid_forward(self, F, x, gamma, beta): # pylint: disable=arguments-differ
-        u = F.mean(x, -1, keepdims=True)
-        s = F.mean(F.broadcast_sub(x, u) ** 2, -1, keepdims=True) + self._eps
-        x = F.broadcast_div(F.broadcast_sub(x, u), s.sqrt())
-        return F.broadcast_add(F.broadcast_mul(gamma, x), beta)
-
-    def __repr__(self):
-        s = '{name}('
-        in_channels = self.gamma.shape[0]
-        s += 'in_channels={0}, epsilon={1})'.format(in_channels, self._eps)
-        return s.format(name=self.__class__.__name__)
 
 class BERTPositionwiseFFN(BasePositionwiseFFN):
     """Structure of the Positionwise Feed-Forward Neural Network for
@@ -98,6 +85,7 @@ class BERTPositionwiseFFN(BasePositionwiseFFN):
     Outputs:
         - **outputs** : output encoding of shape (batch_size, length, C_out).
     """
+
     def __init__(self, units=512, hidden_size=2048, dropout=0.0, use_residual=True,
                  weight_initializer=None, bias_initializer='zeros',
                  prefix=None, params=None):
@@ -109,6 +97,7 @@ class BERTPositionwiseFFN(BasePositionwiseFFN):
                                                   # extra configurations for BERT
                                                   activation='gelu',
                                                   use_bert_layer_norm=True)
+
 
 class BERTEncoder(BaseTransformerEncoder):
     """Structure of the BERT Encoder.
@@ -162,6 +151,7 @@ class BERTEncoder(BaseTransformerEncoder):
             Either be an empty list or contains the attention weights in this step.
             The attention weights will have shape (batch_size, num_heads, length, mem_length)
     """
+
     def __init__(self, attention_cell='multi_head', num_layers=2,
                  units=512, hidden_size=2048, max_length=50,
                  num_heads=4, scaled=True, dropout=0.0,
@@ -182,6 +172,7 @@ class BERTEncoder(BaseTransformerEncoder):
                                           use_bert_encoder=True,
                                           use_layer_norm_before_dropout=False,
                                           scale_embed=False)
+
 
 class BERTEncoderCell(BaseTransformerEncoderCell):
     """Structure of the Transformer Encoder Cell for BERT.
@@ -228,6 +219,7 @@ class BERTEncoderCell(BaseTransformerEncoderCell):
             Shape (batch_size, length, C_out)
         - **additional_outputs**: the additional output of all the transformer encoder cell.
     """
+
     def __init__(self, attention_cell='multi_head', units=128,
                  hidden_size=512, num_heads=4, scaled=True,
                  dropout=0.0, use_residual=True, output_attention=False,
@@ -250,6 +242,7 @@ class BERTEncoderCell(BaseTransformerEncoderCell):
 ###############################################################################
 #                                FULL MODEL                                   #
 ###############################################################################
+
 
 class BERTModel(Block):
     """Model for BERT (Bidirectional Encoder Representations from Transformers).
@@ -293,23 +286,26 @@ class BERTModel(Block):
         See document of `mx.gluon.Block`.
 
     Inputs:
-        - **inputs**: input sequence tensor of shape (batch_size, seq_length)
-        - **token_types**: input token type tensor of shape (batch_size, seq_length).
+        - **inputs**: input sequence tensor, shape (batch_size, seq_length)
+        - **token_types**: input token type tensor, shape (batch_size, seq_length).
             If the inputs contain two sequences, then the token type of the first
             sequence differs from that of the second one.
-        - **valid_length**: tensor for valid length of shape (batch_size)
+        - **valid_length**: optional tensor of input sequence valid lengths, shape (batch_size,)
+        - **masked_positions**: optional tensor of position of tokens for masked LM decoding,
+            shape (batch_size, num_masked_positions).
 
     Outputs:
         - **sequence_outputs**: output tensor of sequence encodings.
             Shape (batch_size, seq_length, units).
         - **pooled_output**: output tensor of pooled representation of the first tokens.
             Returned only if use_pooler is True. Shape (batch_size, units)
-        - **classifier_output**: output tensor of next sentence classification prediction.
+        - **next_sentence_classifier_output**: output tensor of next sentence classification.
             Returned only if use_classifier is True. Shape (batch_size, 2)
-        - **decode_output**: output tensor of sequence decoding for masked language model
+        - **masked_lm_outputs**: output tensor of sequence decoding for masked language model
             prediction. Returned only if use_decoder True.
-            Shape (batch_size, vocab_size)
+            Shape (batch_size, num_masked_positions, vocab_size)
     """
+
     def __init__(self, encoder, vocab_size=None, token_type_vocab_size=None, units=None,
                  embed_size=None, embed_dropout=0.0, embed_initializer=None,
                  word_embed=None, token_type_embed=None, use_pooler=True, use_decoder=True,
@@ -336,7 +332,7 @@ class BERTModel(Block):
             assert not use_classifier, 'Cannot use classifier if use_pooler is False'
         if self._use_decoder:
             # Construct decoder for masked language model
-            self.decoder = self._get_decoder(units, vocab_size, self.word_embed, 'decoder_')
+            self.decoder = self._get_decoder(units, vocab_size, self.word_embed[0], 'decoder_')
 
     def _get_classifier(self, prefix):
         """ Construct a decoder for the masked language model task """
@@ -348,10 +344,12 @@ class BERTModel(Block):
         """ Construct a decoder for the masked language model task """
         with self.name_scope():
             decoder = nn.HybridSequential(prefix=prefix)
-            decoder.add(nn.Dense(units))
+            decoder.add(nn.Dense(units, flatten=False))
             decoder.add(GELU())
             decoder.add(BERTLayerNorm(in_channels=units))
-            decoder.add(nn.Dense(vocab_size, params=embed.params))
+            decoder.add(nn.Dense(vocab_size, flatten=False, params=embed.collect_params()))
+        assert decoder[3].weight == list(embed.collect_params().values())[0], \
+            'The weights of word embedding are not tied with those of decoder'
         return decoder
 
     def _get_embed(self, embed, vocab_size, embed_size, initializer, dropout, prefix):
@@ -381,7 +379,7 @@ class BERTModel(Block):
                               prefix=prefix)
         return pooler
 
-    def forward(self, inputs, token_types, valid_length=None): #pylint: disable=arguments-differ
+    def forward(self, inputs, token_types, valid_length=None, masked_positions=None):  # pylint: disable=arguments-differ
         """Generate the representation given the inputs.
 
         This is used in training or fine-tuning a BERT model.
@@ -393,13 +391,14 @@ class BERTModel(Block):
             pooled_out = self._apply_pooling(seq_out)
             outputs.append(pooled_out)
             if self._use_classifier:
-                classifier_out = self.classifier(pooled_out)
-                outputs.append(classifier_out)
+                next_sentence_classifier_out = self.classifier(pooled_out)
+                outputs.append(next_sentence_classifier_out)
         if self._use_decoder:
-            decoder_out = self._decode(seq_out, valid_length)
+            assert masked_positions is not None, \
+                'masked_positions tensor is required for decoding masked language model'
+            decoder_out = self._decode(seq_out, masked_positions)
             outputs.append(decoder_out)
         return tuple(outputs) if len(outputs) > 1 else outputs[0]
-
 
     def _encode_sequence(self, inputs, token_types, valid_length=None):
         """Generate the representation given the input sequences.
@@ -422,32 +421,52 @@ class BERTModel(Block):
         outputs = sequence[:, 0, :]
         return self.pooler(outputs)
 
-    def _decode(self, sequence, valid_length=None):
-        """Generate unormalized prediction for the masked language model task.
+    def _decode(self, sequence, masked_positions):
+        """Generate unnormalized prediction for the masked language model task.
 
         This is only used for pre-training the BERT model.
+
+        Inputs:
+            - **sequence**: input tensor of sequence encodings.
+              Shape (batch_size, seq_length, units).
+            - **masked_positions**: input tensor of position of tokens for masked LM decoding.
+              Shape (batch_size, num_masked_positions). For each sample in the batch, the values
+              in this tensor must not be out of bound considering the length of the sequence.
+
+        Outputs:
+            - **masked_lm_outputs**: output tensor of token predictions for target masked_positions.
+                Shape (batch_size, num_masked_positions, vocab_size).
         """
-        if valid_length is None:
-            last_step = sequence[:, -1, :]
-        else:
-            batch_size = sequence.shape[0]
-            ctx = valid_length.context
-            dtype = valid_length.dtype
-            batch_idx = mx.nd.arange(0, batch_size, dtype=dtype, ctx=ctx).reshape((1, -1))
-            valid_length = (valid_length - 1).reshape((1, -1))
-            last_step_idx = mx.nd.Concat(batch_idx, valid_length, dim=0)
-            last_step = mx.nd.gather_nd(sequence, last_step_idx)
-        return self.decoder(last_step)
+        batch_size = sequence.shape[0]
+        num_masked_positions = masked_positions.shape[1]
+        ctx = masked_positions.context
+        dtype = masked_positions.dtype
+        # batch_idx = [0,0,0,1,1,1,2,2,2...]
+        # masked_positions = [1,2,4,0,3,4,2,3,5...]
+        batch_idx = mx.nd.arange(0, batch_size, repeat=num_masked_positions, dtype=dtype, ctx=ctx)
+        batch_idx = batch_idx.reshape((1, -1))
+        masked_positions = masked_positions.reshape((1, -1))
+        position_idx = mx.nd.Concat(batch_idx, masked_positions, dim=0)
+        encoded = mx.nd.gather_nd(sequence, position_idx)
+        encoded = encoded.reshape((batch_size, num_masked_positions, sequence.shape[-1]))
+        decoded = self.decoder(encoded)
+        return decoded
 
 ###############################################################################
 #                               GET MODEL                                     #
 ###############################################################################
+
 
 model_store._model_sha1.update(
     {name: checksum for checksum, name in [
         ('5656dac6965b5054147b0375337d5a6a7a2ff832', 'bert_12_768_12_book_corpus_wiki_en_cased'),
         ('75cc780f085e8007b3bf6769c6348bb1ff9a3074', 'bert_12_768_12_book_corpus_wiki_en_uncased'),
         ('237f39851b24f0b56d70aa20efd50095e3926e26', 'bert_12_768_12_wiki_multilingual'),
+        ('237f39851b24f0b56d70aa20efd50095e3926e26', 'bert_12_768_12_wiki_multilingual_uncased'),
+        ('b0f57a207f85a7d361bb79de80756a8c9a4276f7', 'bert_12_768_12_wiki_multilingual_cased'),
+        ('885ebb9adc249a170c5576e90e88cfd1bbd98da6', 'bert_12_768_12_wiki_cn'),
+        ('885ebb9adc249a170c5576e90e88cfd1bbd98da6', 'bert_12_768_12_wiki_cn_cased'),
+        ('4e685a966f8bf07d533bd6b0e06c04136f23f620', 'bert_24_1024_16_book_corpus_wiki_en_cased'),
         ('24551e1446180e045019a87fc4ffbf714d99c0b5', 'bert_24_1024_16_book_corpus_wiki_en_uncased')
     ]})
 
@@ -501,8 +520,8 @@ def bert_12_768_12(dataset_name=None, vocab=None, pretrained=True, ctx=mx.cpu(),
     ----------
     dataset_name : str or None, default None
         Options include 'book_corpus_wiki_en_cased', 'book_corpus_wiki_en_uncased',
-        and 'wiki_multilingual'.
-    vocab : gluonnlp.Vocab or None, default None
+        'wiki_cn_cased', 'wiki_multilingual_uncased' and 'wiki_multilingual_cased'.
+    vocab : gluonnlp.vocab.BERTVocab or None, default None
         Vocabulary for the dataset. Must be provided if dataset is not specified.
     pretrained : bool, default True
         Whether to load the pretrained weights for model.
@@ -521,12 +540,13 @@ def bert_12_768_12(dataset_name=None, vocab=None, pretrained=True, ctx=mx.cpu(),
 
     Returns
     -------
-    BERTModel, gluonnlp.Vocab
+    BERTModel, gluonnlp.vocab.BERTVocab
     """
-    return _bert_model(model_name='bert_12_768_12', vocab=vocab, dataset_name=dataset_name,
-                       pretrained=pretrained, ctx=ctx, use_pooler=use_pooler,
-                       use_decoder=use_decoder, use_classifier=use_classifier, root=root,
-                       **kwargs)
+    return get_bert_model(model_name='bert_12_768_12', vocab=vocab,
+                          dataset_name=dataset_name, pretrained=pretrained, ctx=ctx,
+                          use_pooler=use_pooler, use_decoder=use_decoder,
+                          use_classifier=use_classifier, root=root, **kwargs)
+
 
 def bert_24_1024_16(dataset_name=None, vocab=None, pretrained=True, ctx=mx.cpu(),
                     use_pooler=True, use_decoder=True, use_classifier=True,
@@ -539,8 +559,8 @@ def bert_24_1024_16(dataset_name=None, vocab=None, pretrained=True, ctx=mx.cpu()
     Parameters
     ----------
     dataset_name : str or None, default None
-        Options include 'book_corpus_wiki_en_uncased'.
-    vocab : gluonnlp.Vocab or None, default None
+        Options include 'book_corpus_wiki_en_uncased' and 'book_corpus_wiki_en_cased'.
+    vocab : gluonnlp.vocab.BERTVocab or None, default None
         Vocabulary for the dataset. Must be provided if dataset is not specified.
     pretrained : bool, default True
         Whether to load the pretrained weights for model.
@@ -559,27 +579,56 @@ def bert_24_1024_16(dataset_name=None, vocab=None, pretrained=True, ctx=mx.cpu()
 
     Returns
     -------
-    BERTModel, gluonnlp.Vocab
+    BERTModel, gluonnlp.vocab.BERTVocab
     """
-    return _bert_model(model_name='bert_24_1024_16', vocab=vocab, dataset_name=dataset_name,
-                       pretrained=pretrained, ctx=ctx, use_pooler=use_pooler,
-                       use_decoder=use_decoder, use_classifier=use_classifier, root=root,
-                       **kwargs)
+    return get_bert_model(model_name='bert_24_1024_16', vocab=vocab,
+                          dataset_name=dataset_name, pretrained=pretrained,
+                          ctx=ctx, use_pooler=use_pooler,
+                          use_decoder=use_decoder, use_classifier=use_classifier,
+                          root=root, **kwargs)
 
-def _bert_model(model_name=None, dataset_name=None, vocab=None, pretrained=True, ctx=mx.cpu(),
-                use_pooler=True, use_decoder=True, use_classifier=True,
-                root=os.path.join('~', '.mxnet', 'models'), **kwargs):
-    """BERT pretrained model.
+
+def get_bert_model(model_name=None, dataset_name=None, vocab=None,
+                   pretrained=True, ctx=mx.cpu(),
+                   use_pooler=True, use_decoder=True, use_classifier=True,
+                   root=os.path.join('~', '.mxnet', 'models'), **kwargs):
+    """Any BERT pretrained model.
+
+    Parameters
+    ----------
+    model_name : str or None, default None
+        Options include 'bert_24_1024_16' and 'bert_12_768_12'.
+    dataset_name : str or None, default None
+        Options include 'book_corpus_wiki_en_cased', 'book_corpus_wiki_en_uncased'
+        for both bert_24_1024_16 and bert_12_768_12.
+        'wiki_cn_cased', 'wiki_multilingual_uncased' and 'wiki_multilingual_cased'
+        for bert_12_768_12 only.
+    vocab : gluonnlp.vocab.BERTVocab or None, default None
+        Vocabulary for the dataset. Must be provided if dataset is not specified.
+    pretrained : bool, default True
+        Whether to load the pretrained weights for model.
+    ctx : Context, default CPU
+        The context in which to load the pretrained weights.
+    root : str, default '~/.mxnet/models'
+        Location for keeping the model parameters.
+    use_pooler : bool, default True
+        Whether to include the pooler which converts the encoded sequence tensor of shape
+        (batch_size, seq_length, units) to a tensor of shape (batch_size, units)
+        for for segment level classification task.
+    use_decoder : bool, default True
+        Whether to include the decoder for masked language model prediction.
+    use_classifier : bool, default True
+        Whether to include the classifier for next sentence classification.
 
     Returns
     -------
-    BERTModel, gluonnlp.Vocab
+    BERTModel, gluonnlp.vocab.BERTVocab
     """
     predefined_args = bert_hparams[model_name]
     mutable_args = ['use_residual', 'dropout', 'embed_dropout', 'word_embed']
     mutable_args = frozenset(mutable_args)
     assert all((k not in kwargs or k in mutable_args) for k in predefined_args), \
-           'Cannot override predefined model settings.'
+        'Cannot override predefined model settings.'
     predefined_args.update(kwargs)
     # encoder
     encoder = BERTEncoder(attention_cell=predefined_args['attention_cell'],
@@ -591,10 +640,14 @@ def _bert_model(model_name=None, dataset_name=None, vocab=None, pretrained=True,
                           scaled=predefined_args['scaled'],
                           dropout=predefined_args['dropout'],
                           use_residual=predefined_args['use_residual'])
-    # vocab
-    vocab = _load_vocab(dataset_name, vocab, root)
+    # bert_vocab
+    from ..vocab import BERTVocab
+    if dataset_name in ['wiki_cn', 'wiki_multilingual']:
+        warnings.warn('wiki_cn/wiki_multilingual will be deprecated.'
+                      ' Please use wiki_cn_cased/wiki_multilingual_uncased instead.')
+    bert_vocab = _load_vocab(dataset_name, vocab, root, cls=BERTVocab)
     # BERT
-    net = BERTModel(encoder, len(vocab),
+    net = BERTModel(encoder, len(bert_vocab),
                     token_type_vocab_size=predefined_args['token_type_vocab_size'],
                     units=predefined_args['units'],
                     embed_size=predefined_args['embed_size'],
@@ -606,4 +659,4 @@ def _bert_model(model_name=None, dataset_name=None, vocab=None, pretrained=True,
         ignore_extra = not (use_pooler and use_decoder and use_classifier)
         _load_pretrained_params(net, model_name, dataset_name, root, ctx,
                                 ignore_extra=ignore_extra)
-    return net, vocab
+    return net, bert_vocab
